@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Robot Arm Controller</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-window">
+    <!-- Window Title Bar -->
+    <div class="window-title-bar">
+      <div class="title-left">
+        <span class="app-icon">🤖</span>
+        <span class="window-title">Robot Arm Controller</span>
+      </div>
+    </div>
+
+    <div class="workspace-grid">
+      <div class="column-left">
+
+        <!-- MQTT Connection -->
+        <div class="card connection-card">
+          <div class="card-title-bar">
+            <span class="card-title">MQTT Connection</span>
+            <span id="statusDot" class="status-dot disconnected" title="Kết nối tới broker"></span>
+            <span id="statusText" class="status-text">Disconnected</span>
+            <span id="robotDot" class="status-dot disconnected" title="Trạng thái ESP32"></span>
+            <span id="robotText" class="robot-text">ESP32: Offline</span>
+          </div>
+          <div class="connection-row">
+            <button id="btnConnect" class="btn btn-connect">Connect</button>
+            <div class="input-wrapper">
+              <input type="text" id="brokerUrl" class="input-styled" value="wss://broker.emqx.io:8084/mqtt" spellcheck="false" title="WebSocket URL của broker MQTT">
+            </div>
+          </div>
+        </div>
+
+        <!-- Gripper & Teaching -->
+        <div class="middle-section">
+          <div class="card card-gripper">
+            <div class="card-title">Gripper</div>
+            <div class="btn-group-2">
+              <button id="btnRelease" class="btn btn-gripper">Release</button>
+              <button id="btnGrab" class="btn btn-gripper">Grab</button>
+            </div>
+          </div>
+
+          <div class="card card-teaching">
+            <div class="card-title">Teaching</div>
+            <div class="btn-group-2">
+              <button id="btnRecord" class="btn btn-teaching">Record Off</button>
+              <button id="btnRun" class="btn btn-teaching">Run</button>
+              <button id="btnStop" class="btn btn-teaching btn-stop">Stop</button>
+            </div>
+            <div class="teaching-subbar">
+              <span id="teachPointBadge" class="teach-badge">0 điểm lưu</span>
+              <button id="btnAddPoint" class="btn-small" title="Bật Record để lưu tư thế hiện tại">+ Lưu điểm</button>
+              <button id="btnClearPoints" class="btn-small danger" title="Xóa toàn bộ các điểm đã lưu">Xóa</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Jogging -->
+        <div class="card card-jogging">
+          <div class="card-title">Jogging</div>
+
+          <div class="jog-row">
+            <label class="jog-label" for="slider1">Đế</label>
+            <div class="slider-wrapper">
+              <input type="range" id="slider1" class="jog-slider" min="0" max="180" step="1" value="90">
+            </div>
+            <input type="number" id="input1" class="jog-input" min="0" max="180" step="1" value="90">
+          </div>
+
+          <div class="jog-row">
+            <label class="jog-label" for="slider2">Vai</label>
+            <div class="slider-wrapper">
+              <input type="range" id="slider2" class="jog-slider" min="0" max="180" step="1" value="90">
+            </div>
+            <input type="number" id="input2" class="jog-input" min="0" max="180" step="1" value="90">
+          </div>
+
+          <div class="jog-row">
+            <label class="jog-label" for="slider3">Khuỷu</label>
+            <div class="slider-wrapper">
+              <input type="range" id="slider3" class="jog-slider" min="0" max="180" step="1" value="90">
+            </div>
+            <input type="number" id="input3" class="jog-input" min="0" max="180" step="1" value="90">
+          </div>
+
+          <div class="jog-row">
+            <label class="jog-label" for="slider4">Kẹp</label>
+            <div class="slider-wrapper">
+              <input type="range" id="slider4" class="jog-slider" min="0" max="180" step="1" value="90">
+            </div>
+            <input type="number" id="input4" class="jog-input" min="0" max="180" step="1" value="90">
+          </div>
+
+          <div class="jog-footer">
+            <button id="btnHome" class="btn-subtle" title="Đưa tất cả servo về 90°">⌂ Vị trí Home</button>
+            <span class="jog-note">Kéo thanh trượt hoặc nhập số rồi nhấn Enter</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- MQTT Log -->
+    <div class="card card-log">
+      <div class="log-header" id="logHeaderToggle">
+        <div class="log-title">
+          <span class="terminal-icon">⌨</span>
+          <span>MQTT Live Monitor & Log</span>
+          <span id="logCounter" class="log-count">(0 messages)</span>
+        </div>
+        <div class="log-actions">
+          <button id="btnClearLog" class="btn-small">Xóa log</button>
+          <span id="logChevron" class="log-chevron">▼</span>
+        </div>
+      </div>
+      <div id="logBody" class="log-body">
+        <div id="logConsole"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="mqtt.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
