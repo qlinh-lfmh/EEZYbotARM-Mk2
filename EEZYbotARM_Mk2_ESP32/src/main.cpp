@@ -32,12 +32,11 @@ bool statusDirty = false;   // Chế độ, quyền điều khiển hoặc số 
 enum Joint { BASE, SHOULDER, ELBOW, GRIPPER, JOINT_COUNT };
 const char* JOINT_KEYS[JOINT_COUNT] = { "joint1", "joint2", "joint3", "joint4" };
 
-// Giới hạn hành trình, căn chỉnh lại trên tay máy thật để servo không tì vào khung
-// TẠM THỜI mở hết 0–180 để khảo sát góc. Khảo sát xong thì đặt lại giới hạn thật ở đây
-// (web tự lấy giới hạn này qua status, nhưng nên sửa cả DEFAULT_LIMITS trong app.js cho khớp)
-// Toàn bộ hệ thống (web, tay cầm, Teaching, status) dùng GÓC KHỚP THẬT của tay máy.
-// Chỉ khi gửi cho STM32 mới đổi sang góc servo theo tỉ số truyền GEAR_RATIO
-// Đế 60–120 (góc thật sau bánh răng), vai 0–40, khuỷu 0–80 (đã khảo sát), kẹp 90 (mở) – 180 (đóng)
+// Giới hạn hành trình (đã khảo sát trên tay máy thật để servo không tì vào khung).
+// Toàn bộ hệ thống (web, tay cầm, Teaching, status) dùng GÓC KHỚP THẬT của tay máy,
+// chỉ khi gửi cho STM32 mới đổi sang góc servo theo GEAR_RATIO.
+// Web tự lấy giới hạn này qua status, nhưng nên sửa cả DEFAULT_LIMITS trong app.js cho khớp
+// Đế 60–120 (góc thật sau bánh răng), vai 0–40, khuỷu 0–80, kẹp 90 (mở) – 180 (đóng)
 const float JOINT_MIN[JOINT_COUNT] = {  60,   0,   0,  90 };
 const float JOINT_MAX[JOINT_COUNT] = { 120,  40,  80, 180 };
 
@@ -63,14 +62,15 @@ const float ACCEL = 0.3;       // Mỗi nhịp tăng/giảm tốc 0,3 độ/nh�
 float servoScale(int joint) {
     return fabsf(GEAR_RATIO[joint]);
 }
+
 const unsigned long JOG_TIMEOUT_MS = 100;  // Lệnh cần gạt quá cũ (loop bị chặn) thì dừng, tránh tay máy tự chạy tiếp
+
+// Vị trí Home (góc khớp thật), tay máy về đây khi bật nguồn. Phải khớp HOME_ANGLES trên web (nút Home)
+#define HOME_POSE { 90, 0, 0, 90 }
+const float HOME[JOINT_COUNT] = HOME_POSE;
 
 // Các biến dưới đây dùng chung giữa loop() và task chuyển động, phải đọc/ghi trong motionMux
 portMUX_TYPE motionMux = portMUX_INITIALIZER_UNLOCKED;
-// Vị trí Home (góc khớp thật), tay máy về đây khi bật nguồn: đế 90, vai 0, khuỷu 0, kẹp 90.
-// Phải khớp HOME_ANGLES trên web (nút Home)
-#define HOME_POSE { 90, 0, 0, 90 }
-const float HOME[JOINT_COUNT] = HOME_POSE;
 float angle[JOINT_COUNT]  = HOME_POSE;   // Góc đang gửi cho STM32 (chỉ task chuyển động ghi)
 float target[JOINT_COUNT] = HOME_POSE;   // Góc servo cần đi tới
 float velocity[JOINT_COUNT] = { 0, 0, 0, 0 };   // Vận tốc hiện tại, độ servo/nhịp, có dấu
@@ -166,8 +166,7 @@ void applyJog(unsigned long now) {
 }
 
 // Mỗi lúc chỉ một servo chạy: servo đang chạy tới đích xong mới tới lượt servo kế tiếp,
-// theo thứ tự đế, vai, khuỷu, kẹp. Gọi trong motionMux
-// Mọi servo (kể cả kẹp) tăng tốc dần lên tối đa 100 độ/giây, gần tới đích thì giảm tốc dần rồi dừng êm
+// theo thứ tự đế, vai, khuỷu, kẹp. Servo tăng tốc dần, gần tới đích thì giảm tốc rồi dừng êm. Gọi trong motionMux
 void updateMotion() {
     if (movingJoint < 0 || (angle[movingJoint] == target[movingJoint] && velocity[movingJoint] == 0)) {
         movingJoint = -1;
@@ -606,15 +605,6 @@ void setup() {
     Serial.printf("Device ID: %s\n", deviceId);
 
     if (prefs.begin("teaching", false)) {
-        // Điểm lưu từ bản cũ ghi góc servo của đế, bản này lưu góc khớp thật, nên bỏ điểm cũ một lần
-        const uint8_t POINTS_FORMAT = 2;
-        if (prefs.getUChar("format", 1) != POINTS_FORMAT) {
-            if (prefs.isKey("points")) {
-                prefs.remove("points");
-                Serial.println("[TEACHING] Da xoa diem cu (luu theo goc servo), can Record lai");
-            }
-            prefs.putUChar("format", POINTS_FORMAT);
-        }
         loadPoints();
     } else {
         Serial.println("[TEACHING] Khong mo duoc flash, cac diem se khong duoc luu");
@@ -631,9 +621,10 @@ void setup() {
     BP32.setup(&onConnectedController, &onDisconnectedController);
     Serial.println("Dang cho tay cam Bluetooth ket noi...");
 
+    for (int j = 0; j < JOINT_COUNT; j++) sentFrame[j + 1] = jointToServo(j, HOME[j]);
+
     // Task chuyển động chạy trên core 1 (WiFi và Bluetooth chạy trên core 0),
     // ưu tiên cao hơn loop() để luôn gửi góc cho STM32 đúng nhịp
-    for (int j = 0; j < JOINT_COUNT; j++) sentFrame[j + 1] = jointToServo(j, HOME[j]);
     xTaskCreatePinnedToCore(motionTask, "motion", 4096, nullptr, 2, nullptr, 1);
 }
 
