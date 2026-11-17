@@ -36,26 +36,18 @@
           </div>
         </div>
 
-        <!-- Gripper & Teaching -->
+        <!-- Teaching -->
         <div class="middle-section">
-          <div class="card card-gripper">
-            <div class="card-title">Gripper</div>
-            <div class="btn-group-2">
-              <button id="btnRelease" class="btn btn-gripper">Release</button>
-              <button id="btnGrab" class="btn btn-gripper">Grab</button>
-            </div>
-          </div>
-
           <div class="card card-teaching">
             <div class="card-title">Teaching</div>
             <div class="btn-group-2">
-              <button id="btnRecord" class="btn btn-teaching">Record Off</button>
+              <button id="btnRecord" class="btn btn-teaching" title="Record On lưu góc hiện tại của 4 servo làm điểm ban đầu">Record Off</button>
               <button id="btnRun" class="btn btn-teaching">Run</button>
               <button id="btnStop" class="btn btn-teaching btn-stop">Stop</button>
             </div>
             <div class="teaching-subbar">
               <span id="teachPointBadge" class="teach-badge">0 điểm lưu</span>
-              <button id="btnAddPoint" class="btn-small" title="Bật Record để lưu tư thế hiện tại">+ Lưu điểm</button>
+              <button id="btnAddPoint" class="btn-small" title="Lưu góc cuối cùng trên các thanh trượt">+ Lưu điểm</button>
               <button id="btnClearPoints" class="btn-small danger" title="Xóa toàn bộ các điểm đã lưu">Xóa</button>
             </div>
           </div>
@@ -68,37 +60,45 @@
           <div class="jog-row">
             <label class="jog-label" for="slider1">Đế</label>
             <div class="slider-wrapper">
-              <input type="range" id="slider1" class="jog-slider" min="0" max="180" step="1" value="90">
+              <span class="jog-limit" id="min1">60°</span>
+              <input type="range" id="slider1" class="jog-slider" min="60" max="120" step="1" value="90">
+              <span class="jog-limit" id="max1">120°</span>
             </div>
-            <input type="number" id="input1" class="jog-input" min="0" max="180" step="1" value="90">
+            <input type="number" id="input1" class="jog-input" min="60" max="120" step="1" value="90">
           </div>
 
           <div class="jog-row">
             <label class="jog-label" for="slider2">Vai</label>
             <div class="slider-wrapper">
-              <input type="range" id="slider2" class="jog-slider" min="0" max="180" step="1" value="90">
+              <span class="jog-limit" id="min2">0°</span>
+              <input type="range" id="slider2" class="jog-slider" min="0" max="40" step="1" value="0">
+              <span class="jog-limit" id="max2">40°</span>
             </div>
-            <input type="number" id="input2" class="jog-input" min="0" max="180" step="1" value="90">
+            <input type="number" id="input2" class="jog-input" min="0" max="40" step="1" value="0">
           </div>
 
           <div class="jog-row">
             <label class="jog-label" for="slider3">Khuỷu</label>
             <div class="slider-wrapper">
-              <input type="range" id="slider3" class="jog-slider" min="0" max="180" step="1" value="90">
+              <span class="jog-limit" id="min3">0°</span>
+              <input type="range" id="slider3" class="jog-slider" min="0" max="80" step="1" value="0">
+              <span class="jog-limit" id="max3">80°</span>
             </div>
-            <input type="number" id="input3" class="jog-input" min="0" max="180" step="1" value="90">
+            <input type="number" id="input3" class="jog-input" min="0" max="80" step="1" value="0">
           </div>
 
           <div class="jog-row">
-            <label class="jog-label" for="slider4">Kẹp</label>
+            <label class="jog-label" for="slider4" title="90° là mở, 180° là đóng">Kẹp</label>
             <div class="slider-wrapper">
-              <input type="range" id="slider4" class="jog-slider" min="0" max="180" step="1" value="90">
+              <span class="jog-limit" id="min4">90°</span>
+              <input type="range" id="slider4" class="jog-slider" min="90" max="180" step="1" value="90">
+              <span class="jog-limit" id="max4">180°</span>
             </div>
-            <input type="number" id="input4" class="jog-input" min="0" max="180" step="1" value="90">
+            <input type="number" id="input4" class="jog-input" min="90" max="180" step="1" value="90">
           </div>
 
           <div class="jog-footer">
-            <button id="btnHome" class="btn-subtle" title="Đưa tất cả servo về 90°">⌂ Vị trí Home</button>
+            <button id="btnHome" class="btn-subtle" title="Đế 90°, vai 0°, khuỷu 0°, kẹp mở">⌂ Vị trí Home</button>
             <span class="jog-note">Kéo thanh trượt hoặc nhập số rồi nhấn Enter</span>
           </div>
         </div>

@@ -46,8 +46,9 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 uint8_t rx_byte;                    // Biến chứa 1 byte vừa nhận được
-volatile uint8_t rx_buffer[5];      // Mảng lưu toàn bộ khung 5 byte
-volatile uint8_t rx_index = 0;      // Con trỏ vị trí mảng
+uint8_t rx_temp[4];                 // Khung đang nhận dở, chỉ ngắt UART ghi vào
+volatile uint8_t rx_frame[4];       // Khung hoàn chỉnh và hợp lệ gần nhất: đế, vai, khuỷu, kẹp
+volatile uint8_t rx_index = 0;      // 0 = đang chờ 0xFF, 1..4 = vị trí byte góc kế tiếp
 volatile uint8_t data_ready = 0;    // Cờ báo hiệu: 1 = đã có dữ liệu mới, 0 = chưa có
 
 uint8_t baseAngle = 90;
@@ -90,7 +91,7 @@ void Servo_Write(uint16_t baseAngle, uint16_t shoulderAngle, uint16_t elbowAngle
   uint16_t CCR3_Value = 500 + (elbowAngle * 2000) / 180;
   uint16_t CCR4_Value = 500 + (gripperAngle * 2000) / 180;
 
-	htim2.Instance->CCR1 = CCR1_Value;
+  htim2.Instance->CCR1 = CCR1_Value;
   htim2.Instance->CCR2 = CCR2_Value;
   htim2.Instance->CCR3 = CCR3_Value;
   htim2.Instance->CCR4 = CCR4_Value;
@@ -103,17 +104,26 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   {
     if (rx_byte == 0xFF)
     {
-      rx_index = 1;
+      rx_index = 1;               // Bắt đầu khung mới
     }
     else if (rx_index >= 1)       // rx_index = 0 nghĩa là đang chờ 0xFF
     {
-      rx_buffer[rx_index] = rx_byte;
-      rx_index++;
+      if (rx_byte > 180)
+      {
+        rx_index = 0;             // Góc không hợp lệ → khung bị nhiễu, bỏ cả khung, chờ 0xFF kế tiếp
+      }
+      else
+      {
+        rx_temp[rx_index - 1] = rx_byte;
+        rx_index++;
         if (rx_index > 4)
         {
+          // Đủ 4 góc hợp lệ mới chép sang rx_frame, để vòng while không đọc phải khung đang nhận dở
+          for (uint8_t i = 0; i < 4; i++) rx_frame[i] = rx_temp[i];
           rx_index = 0;
           data_ready = 1;
         }
+      }
     }
     HAL_UART_Receive_IT(&huart1, &rx_byte, sizeof(rx_byte));
   }
@@ -171,12 +181,15 @@ int main(void)
   {
     if (data_ready == 1)
     {
+      // Tắt ngắt trong lúc chép 4 byte, để ngắt UART không ghi đè rx_frame giữa chừng
+      __disable_irq();
+      baseAngle = rx_frame[0];
+      shoulderAngle = rx_frame[1];
+      elbowAngle = rx_frame[2];
+      gripperAngle = rx_frame[3];
       data_ready = 0;
-      baseAngle = rx_buffer[1];
-      shoulderAngle = rx_buffer[2];
-      elbowAngle = rx_buffer[3];
-      gripperAngle = rx_buffer[4];
-      
+      __enable_irq();
+
       Servo_Write(baseAngle, shoulderAngle, elbowAngle, gripperAngle);
     }
 

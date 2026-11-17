@@ -4,11 +4,14 @@
   // --- CẤU HÌNH ---
   const BASE_TOPIC = 'uit_eezybot_7f3a9c';    // Phải khớp với các TOPIC_... trên ESP32
   const JOINTS = [1, 2, 3, 4];                // 1: Đế, 2: Vai, 3: Khuỷu, 4: Kẹp
-  const HOME_ANGLES = [90, 90, 90, 90];
-  const GRIPPER_RELEASE_ANGLE = 90;           // Phải khớp với góc mở kẹp trên ESP32
-  const GRIPPER_GRAB_ANGLE = 180;             // Phải khớp với góc đóng kẹp trên ESP32
+  const HOME_ANGLES = [90, 0, 0, 90];         // Phải khớp góc khởi tạo trên ESP32: đế 90, vai 0, khuỷu 0, kẹp 90 (mở)
+  // Giới hạn mặc định khi chưa nhận status, lấy theo JOINT_MIN/JOINT_MAX trên ESP32.
+  // Khi ESP32 gửi status (có "min"/"max"), web sẽ tự cập nhật theo giá trị thật
+  // Đế là góc quay thật sau bánh răng (60–120), không phải góc servo. Kẹp 90 là mở, 180 là đóng
+  const DEFAULT_LIMITS = { 1: [60, 120], 2: [0, 40], 3: [0, 80], 4: [90, 180] };
   const PUBLISH_INTERVAL_MS = 50;             // Gửi góc tối đa 20 lần/giây khi kéo thanh trượt
   const LOCAL_CONTROL_HOLD_MS = 350;          // Bỏ qua góc từ ESP32 ngay sau khi người dùng thao tác
+  const ECHO_TIMEOUT_MS = 2000;               // Chờ tối đa bấy lâu để ESP32 xác nhận góc vừa gửi
   const MAX_LOG_ENTRIES = 200;
 
   // --- TRẠNG THÁI ---
@@ -19,8 +22,12 @@
     mode: 'MANUAL',                           // 'MANUAL' | 'TEACHING' | 'PLAYBACK'
     points: 0,
     source: 'WEB',                            // Bên giữ quyền điều khiển: 'WEB' | 'GAMEPAD'
-    angles: { 1: 90, 2: 90, 3: 90, 4: 90 },
+    angles: { 1: 90, 2: 0, 3: 0, 4: 90 },
+    limits: { 1: [...DEFAULT_LIMITS[1]], 2: [...DEFAULT_LIMITS[2]], 3: [...DEFAULT_LIMITS[3]], 4: [...DEFAULT_LIMITS[4]] },
     lastLocalControlTime: 0,
+    pendingJoints: new Set(),                 // Các khớp đã đổi nhưng chưa gửi
+    awaitingEcho: {},                         // Khớp đã gửi nhưng ESP32 chưa báo lại đúng góc đó: { khớp: { value, until } }
+    draggingJoint: null,                      // Thanh trượt đang được giữ chuột/ngón tay, không để status ghi đè
     publishTimer: null,
     logCount: 0
   };
@@ -34,8 +41,6 @@
     statusText: $('statusText'),
     robotDot: $('robotDot'),
     robotText: $('robotText'),
-    btnRelease: $('btnRelease'),
-    btnGrab: $('btnGrab'),
     btnRecord: $('btnRecord'),
     btnRun: $('btnRun'),
     btnStop: $('btnStop'),
@@ -52,8 +57,9 @@
   };
 
   // --- TIỆN ÍCH ---
-  function clampAngle(value) {
-    return Math.max(0, Math.min(180, Math.round(value)));
+  function clampAngle(joint, value) {
+    const [min, max] = state.limits[joint];
+    return Math.max(min, Math.min(max, Math.round(value)));
   }
 
   function generateClientId() {
@@ -107,36 +113,63 @@
       $(`slider${n}`).disabled = !canControl;
       $(`input${n}`).disabled = !canControl;
     });
-    el.btnHome.disabled = el.btnRelease.disabled = el.btnGrab.disabled = !canControl;
+    el.btnHome.disabled = !canControl;
 
     el.btnRecord.disabled = !canControl;
     el.btnRecord.textContent = teaching ? 'Record On' : 'Record Off';
     el.btnRecord.classList.toggle('recording', teaching);
     el.btnAddPoint.disabled = !(canControl && teaching);
-    el.btnClearPoints.disabled = !canControl;
-    el.btnRun.disabled = !(canControl && !teaching);
+    el.btnClearPoints.disabled = !(canControl && !teaching);
+    el.btnRun.disabled = !(canControl && !teaching && state.points >= 2);  // Điểm ban đầu + ít nhất 1 điểm đã lưu
     el.btnRun.textContent = playback ? 'Running...' : 'Run';
     el.btnStop.disabled = !connected;           // Lệnh Dừng luôn dùng được khi còn kết nối broker
     el.teachPointBadge.textContent = `${state.points} điểm lưu`;
   }
 
-  function updateGripperUI() {
-    el.btnRelease.classList.toggle('active', state.angles[4] === GRIPPER_RELEASE_ANGLE);
-    el.btnGrab.classList.toggle('active', state.angles[4] === GRIPPER_GRAB_ANGLE);
+  // Đặt min/max cho thanh trượt, ô số và nhãn hiển thị của một khớp
+  function setJointLimits(joint, min, max) {
+    state.limits[joint] = [min, max];
+    const slider = $(`slider${joint}`);
+    const input = $(`input${joint}`);
+    if (slider && input) {  // Kẹp không có thanh trượt
+      slider.min = input.min = min;
+      slider.max = input.max = max;
+      $(`min${joint}`).textContent = `${min}°`;
+      $(`max${joint}`).textContent = `${max}°`;
+    }
+    setAngle(joint, state.angles[joint]);  // Kẹp lại góc đang hiển thị vào khoảng mới
+  }
+
+  // Nhận giới hạn từ status của ESP32, bỏ qua nếu dữ liệu không hợp lệ
+  function applyLimitsFromStatus(mins, maxs) {
+    if (!Array.isArray(mins) || !Array.isArray(maxs)) return;
+    JOINTS.forEach((n, i) => {
+      const min = mins[i];
+      const max = maxs[i];
+      const valid = Number.isInteger(min) && Number.isInteger(max) && min >= 0 && max <= 180 && min <= max;
+      if (!valid) return;
+      const [curMin, curMax] = state.limits[n];
+      if (min !== curMin || max !== curMax) {
+        setJointLimits(n, min, max);
+        addLog(`Giới hạn khớp ${n}: ${min}° – ${max}°`, 'info');
+      }
+    });
   }
 
   function setAngle(joint, value) {
-    const angle = clampAngle(value);
+    const angle = clampAngle(joint, value);
     state.angles[joint] = angle;
-    $(`slider${joint}`).value = angle;
+    const slider = $(`slider${joint}`);
+    if (slider) slider.value = angle;
     // Không đổi ô số khi người dùng đang gõ vào đó
     const input = $(`input${joint}`);
-    if (document.activeElement !== input) input.value = angle;
-    if (joint === 4) updateGripperUI();
+    if (input && document.activeElement !== input) input.value = angle;
   }
 
   // --- GỬI LỆNH MQTT ---
-  function publish(subTopic, payload, qos) {
+  // quiet = true: không ghi log, dùng cho các gói gửi liên tục khi đang kéo thanh trượt,
+  // vì ghi log 20 lần/giây làm giao diện bị khựng
+  function publish(subTopic, payload, qos, quiet) {
     if (!state.client || state.connection !== 'connected') {
       addLog('Chưa kết nối broker, lệnh không được gửi.', 'error');
       return;
@@ -146,36 +179,51 @@
     state.client.publish(topic, message, { qos: qos, retain: false }, (err) => {
       if (err) addLog(`Lỗi gửi tới ${topic}: ${err.message}`, 'error');
     });
-    addLog(`[PUB] ${topic} -> ${message}`, 'pub');
+    if (!quiet) addLog(`[PUB] ${topic} -> ${message}`, 'pub');
   }
 
-  function sendAngles(qos) {
-    publish('control/angles', {
-      joint1: state.angles[1],
-      joint2: state.angles[2],
-      joint3: state.angles[3],
-      joint4: state.angles[4]
-    }, qos);
+  // Chỉ gửi các khớp vừa đổi, để không ghi đè góc đích của khớp đang chờ tới lượt chạy trên ESP32
+  function sendPendingJoints(qos) {
+    if (state.pendingJoints.size === 0) return;
+    const payload = {};
+    const until = performance.now() + ECHO_TIMEOUT_MS;
+    state.pendingJoints.forEach((n) => {
+      payload[`joint${n}`] = state.angles[n];
+      state.awaitingEcho[n] = { value: state.angles[n], until: until };
+    });
+    state.pendingJoints.clear();
+    publish('control/angles', payload, qos, qos === 0);  // Chỉ ghi log góc cuối (QoS 1)
   }
 
-  // Khi đang kéo: gom thay đổi và gửi góc mới nhất theo chu kỳ, cho phép mất gói (QoS 0)
-  function scheduleSendAngles() {
-    state.lastLocalControlTime = performance.now();
-    if (state.publishTimer) return;
-    state.publishTimer = setTimeout(() => {
-      state.publishTimer = null;
-      sendAngles(0);
-    }, PUBLISH_INTERVAL_MS);
-  }
-
-  // Khi thao tác xong: gửi ngay góc cuối cùng và đảm bảo gói đến nơi (QoS 1)
-  function sendAnglesNow() {
-    state.lastLocalControlTime = performance.now();
+  function cancelScheduledSend() {
     if (state.publishTimer) {
       clearTimeout(state.publishTimer);
       state.publishTimer = null;
     }
-    sendAngles(1);
+  }
+
+  // Khi đang kéo: gom thay đổi và gửi góc mới nhất theo chu kỳ, cho phép mất gói (QoS 0)
+  function scheduleSendJoint(joint) {
+    state.lastLocalControlTime = performance.now();
+    state.pendingJoints.add(joint);
+    if (state.publishTimer) return;
+    state.publishTimer = setTimeout(() => {
+      state.publishTimer = null;
+      sendPendingJoints(0);
+    }, PUBLISH_INTERVAL_MS);
+  }
+
+  // Gửi ngay các góc đang chờ và đảm bảo gói đến nơi (QoS 1)
+  function flushPendingJoints() {
+    cancelScheduledSend();
+    sendPendingJoints(1);
+  }
+
+  // Khi thao tác xong: gửi ngay góc cuối cùng
+  function sendJointsNow(joints) {
+    state.lastLocalControlTime = performance.now();
+    joints.forEach((n) => state.pendingJoints.add(n));
+    flushPendingJoints();
   }
 
   function sendTeachingCommand(action) {
@@ -195,26 +243,47 @@
     if (['MANUAL', 'TEACHING', 'PLAYBACK'].includes(data.mode)) state.mode = data.mode;
     if (Number.isInteger(data.points) && data.points >= 0) state.points = data.points;
     if (['WEB', 'GAMEPAD'].includes(data.source)) state.source = data.source;
+    applyLimitsFromStatus(data.min, data.max);
 
-    // Lúc người dùng vừa thao tác thì giữ góc trên giao diện để thanh trượt không bị giật ngược,
-    // trừ khi web đang không có quyền điều khiển
-    const recentlyTouched = performance.now() - state.lastLocalControlTime < LOCAL_CONTROL_HOLD_MS;
-    if (state.mode === 'PLAYBACK' || isGamepadActive() || !recentlyTouched) {
-      JOINTS.forEach((n) => {
-        const value = data[`joint${n}`];
-        if (typeof value === 'number' && Number.isFinite(value)) setAngle(n, value);
-      });
-    }
+    // Web không giữ quyền (đang phát lại hoặc tay cầm điều khiển): thanh trượt chạy theo ESP32
+    const now = performance.now();
+    const webInControl = state.mode !== 'PLAYBACK' && !isGamepadActive();
+    const recentlyTouched = now - state.lastLocalControlTime < LOCAL_CONTROL_HOLD_MS;
+    if (!webInControl) state.awaitingEcho = {};
+
+    JOINTS.forEach((n) => {
+      const value = data[`joint${n}`];
+      if (typeof value !== 'number' || !Number.isFinite(value)) return;
+
+      // Thanh trượt đang bị giữ hoặc ô số đang được gõ thì tuyệt đối không ghi đè, tránh giật dưới tay người dùng
+      if (state.draggingJoint === n || document.activeElement === $(`input${n}`)) return;
+
+      if (webInControl) {
+        // Vừa thao tác xong thì giữ nguyên thanh trượt
+        if (recentlyTouched) return;
+        // Status đi qua broker có thể về trễ: chỉ nhận lại góc của khớp vừa gửi khi ESP32 đã báo
+        // đúng góc đó, để thanh trượt không bị kéo về góc cũ rồi nhảy lại
+        const echo = state.awaitingEcho[n];
+        if (echo) {
+          if (value !== echo.value && now < echo.until) return;
+          delete state.awaitingEcho[n];  // Đã xác nhận, hoặc quá lâu thì tin ESP32 (ví dụ góc bị giới hạn lại)
+        }
+      }
+      setAngle(n, value);
+    });
     updateRobotUI();
   }
 
   function handleMessage(topic, payload) {
     const message = payload.toString();
-    addLog(`[SUB] ${topic} -> ${message}`, 'sub');
 
     if (topic === `${BASE_TOPIC}/status`) {
+      // Status đến tới 10 lần/giây, chỉ ghi log khi chế độ, quyền điều khiển hoặc số điểm thay đổi
+      const before = `${state.mode}|${state.source}|${state.points}`;
       handleStatus(message);
+      if (`${state.mode}|${state.source}|${state.points}` !== before) addLog(`[SUB] ${topic} -> ${message}`, 'sub');
     } else if (topic === `${BASE_TOPIC}/online`) {
+      addLog(`[SUB] ${topic} -> ${message}`, 'sub');
       state.robotOnline = message === 'online';
       updateRobotUI();
     }
@@ -282,10 +351,9 @@
     state.connection = 'disconnected';
     state.robotOnline = false;
     state.mode = 'MANUAL';
-    if (state.publishTimer) {
-      clearTimeout(state.publishTimer);
-      state.publishTimer = null;
-    }
+    cancelScheduledSend();
+    state.pendingJoints.clear();
+    state.awaitingEcho = {};
     client.end(true);
     addLog('Đã ngắt kết nối MQTT.');
     updateConnectionUI();
@@ -296,11 +364,17 @@
     const slider = $(`slider${n}`);
     const input = $(`input${n}`);
 
-    slider.addEventListener('input', () => {
-      setAngle(n, Number(slider.value));
-      scheduleSendAngles();
+    // Đánh dấu thanh trượt đang được giữ, để status từ ESP32 không kéo nó đi khi người dùng dừng tay giữa chừng
+    slider.addEventListener('pointerdown', () => {
+      state.draggingJoint = n;
     });
-    slider.addEventListener('change', sendAnglesNow);
+
+    slider.addEventListener('input', () => {
+      state.draggingJoint = state.draggingJoint ?? n;  // Bàn phím (phím mũi tên) không có pointerdown
+      setAngle(n, Number(slider.value));
+      scheduleSendJoint(n);
+    });
+    slider.addEventListener('change', () => sendJointsNow([n]));
 
     // Chỉ gửi khi nhập xong (Enter hoặc rời ô) để servo không chạy theo từng chữ số đang gõ
     input.addEventListener('change', () => {
@@ -311,34 +385,45 @@
       }
       setAngle(n, value);
       input.value = state.angles[n];
-      sendAnglesNow();
+      sendJointsNow([n]);
     });
   });
 
+  // Thả chuột/ngón tay ở bất kỳ đâu (kể cả ngoài thanh trượt) thì kết thúc kéo và gửi ngay góc cuối,
+  // để không bị kẹt trạng thái đang kéo khi con trỏ ra khỏi thanh trượt lúc thả
+  function endDrag() {
+    const n = state.draggingJoint;
+    if (n === null) return;
+    state.draggingJoint = null;
+    if (state.pendingJoints.size > 0) flushPendingJoints();
+    state.lastLocalControlTime = performance.now();
+  }
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+  window.addEventListener('blur', endDrag);
+  JOINTS.forEach((n) => $(`slider${n}`).addEventListener('keyup', endDrag));
+
   el.btnHome.addEventListener('click', () => {
     JOINTS.forEach((n, i) => setAngle(n, HOME_ANGLES[i]));
-    sendAnglesNow();
+    sendJointsNow(JOINTS);
     addLog('Đưa tay máy về vị trí Home.');
   });
 
-  el.btnRelease.addEventListener('click', () => {
-    setAngle(4, GRIPPER_RELEASE_ANGLE);
-    sendAnglesNow();
-  });
-
-  el.btnGrab.addEventListener('click', () => {
-    setAngle(4, GRIPPER_GRAB_ANGLE);
-    sendAnglesNow();
-  });
-
+  // Record On lưu tư thế hiện tại làm điểm ban đầu, Lưu điểm lưu vị trí cuối của các thanh trượt.
+  // Luôn gửi nốt góc đang chờ trước, để ESP32 lưu đúng vị trí cuối của thanh trượt
   el.btnRecord.addEventListener('click', () => {
     const start = state.mode !== 'TEACHING';
+    flushPendingJoints();
     state.mode = start ? 'TEACHING' : 'MANUAL';
     sendTeachingCommand(start ? 'TEACH_START' : 'TEACH_STOP');
     updateRobotUI();
   });
 
-  el.btnAddPoint.addEventListener('click', () => sendTeachingCommand('ADD_POINT'));
+  el.btnAddPoint.addEventListener('click', () => {
+    flushPendingJoints();
+    sendTeachingCommand('ADD_POINT');
+  });
+
   el.btnRun.addEventListener('click', () => sendTeachingCommand('RUN'));
   el.btnStop.addEventListener('click', () => sendTeachingCommand('STOP'));
 
@@ -366,6 +451,6 @@
   });
 
   // --- KHỞI TẠO ---
-  updateGripperUI();
+  JOINTS.forEach((n) => setJointLimits(n, state.limits[n][0], state.limits[n][1]));
   updateConnectionUI();
 })();

@@ -191,7 +191,7 @@ body {
    ======================================================== */
 .middle-section {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;  /* Chỉ còn khung Teaching (kẹp đã chuyển sang thanh trượt) */
   gap: 14px;
 }
 
@@ -341,30 +341,67 @@ body {
   flex: 1;
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
+/* Góc tối thiểu / tối đa của khớp, hiển thị hai bên thanh trượt */
+.jog-limit {
+  min-width: 34px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.jog-limit:first-child {
+  text-align: right;
+}
+
+/* Vùng bấm cao 28px (thanh hiển thị vẫn mảnh 5px) để dễ bấm trúng và kéo, nhất là trên điện thoại.
+   touch-action: pan-y cho phép cuộn trang theo chiều dọc nhưng kéo ngang thì luôn đi vào thanh trượt */
 .jog-slider {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
+  height: 28px;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+  touch-action: pan-y;
+  margin: 0;
+}
+
+.jog-slider::-webkit-slider-runnable-track {
   height: 5px;
   background: #ffffff;
   border-radius: 3px;
-  outline: none;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
-  cursor: pointer;
 }
 
+.jog-slider::-moz-range-track {
+  height: 5px;
+  background: #ffffff;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.jog-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Không dùng transition cho núm kéo, để núm bám theo chuột ngay lập tức */
 .jog-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 14px;
   height: 24px;
+  margin-top: -9.5px;  /* Căn núm vào giữa thanh 5px: (5 - 24) / 2 */
   background: var(--color-slider-thumb);
   border-radius: 3px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   cursor: ew-resize;
-  transition: background-color var(--transition-fast), transform var(--transition-fast);
 }
 
 .jog-slider::-webkit-slider-thumb:hover {
